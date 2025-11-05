@@ -77,11 +77,11 @@ llm = ChatGroq(temperature=0,
 #langgraph state
 class AgentState(TypedDict):
     question:str
-    need_retrival:bool
+    need_retrieval:bool
     retrieved_docs:List[str]
     answer:str
     reflection:dict
-    messages:Annotated[List[str],add]
+    messages:List[str]
     
 class Plan(BaseModel):
     """The plan for handling the user's question"""
@@ -110,20 +110,20 @@ def plan_node(state:AgentState)-> dict:
 
     try:
         response=structured_llm.invoke({"question":question})
-        need_retrival = response.decision == 'retrieve'
+        need_retrieval = response.decision == 'retrieve'
         print(f'➡️ Decision: {response}')
-        return {"need_retrival": need_retrival}
+        return {"need_retrieval": need_retrieval}
     
     except Exception as e:
         print(f"Error in LLM plan:{e}")
-        return {"need_retrival": True}
+        return {"need_retrieval": True}
 
 
 def retrieve_node(state:AgentState)->dict:
     """Get relevant documents from vector store"""
     print("➡️ Calling retirval node")
 
-    if not state["need_retrival"]:
+    if not state["need_retrieval"]:
         print("⏭️  Skipping retrieval (not needed)")
         return {
             "retrieved_docs": [],
@@ -139,7 +139,12 @@ def retrieve_node(state:AgentState)->dict:
     )
     
     docs = retriever.invoke(question)
-    
+
+    if not docs:
+        print("⚠️ No relevant documents found")
+        state["retrieved_docs"] = []
+        state.setdefault("messages", []).append("RETRIEVE: No docs found")
+        return state
     # Extract content
     retrieved_docs = [doc.page_content for doc in docs]
 
@@ -158,13 +163,13 @@ def answer_node(state: AgentState) -> AgentState:
     Node 3: Answer - Generate answer using LLM and retrieved context
     """
     print("\n" + "="*60)
-    print("� ANSWER NODE - Generating response...")
+    print("📋 ANSWER NODE - Generating response...")
     print("="*60)
     
     question = state["question"]
     retrieved_docs = state["retrieved_docs"]
     prompt=""
-    if not state["need_retrival"]:
+    if not state["need_retrieval"]:
         # Simple response for greetings
         prompt_template = """You are a helpful, concise AI assistant. Answer the user's question using general knowledge. If you do not know the answer or the question requires external documents/citations, reply: \"I don't have enough information to answer that question.\" If the question is ambiguous, ask a brief clarifying question.
         Question: {question}
@@ -174,7 +179,7 @@ def answer_node(state: AgentState) -> AgentState:
             template=prompt_template,
             input_variables=["question"]
         )
-      
+        formatted_prompt = prompt.format(question=question)
     else:
             # Create context from retrieved documents
         context = "\n\n".join(retrieved_docs)
@@ -195,8 +200,8 @@ def answer_node(state: AgentState) -> AgentState:
             input_variables=["context", "question"]
         )
     
+        formatted_prompt = prompt.format(context=context, question=question)
     # Generate answer
-    formatted_prompt = prompt.format(context=context, question=question)
     response = llm.invoke(formatted_prompt)
     answer = response.content
     
@@ -291,8 +296,8 @@ def build_graph():
 
 
 initial_state = {
-        "question": "What are the benefits of renewable energy?",
-        "need_retrival": False,
+        "question": "hey renewable energy",
+        "need_retrieval": False,
         "retrieved_docs": [],
         "answer": "",
         "reflection": {},
@@ -301,11 +306,3 @@ initial_state = {
 app = build_graph()
 final_state = app.invoke(initial_state)
     
-#     # Print summary
-# print("\n" + "="*30)
-# print("SUMMARY")
-# print("="*30)
-# print(f"\n❓ Question: {final_state['question']}")
-# print(f"\n💡 Answer: {final_state['answer']}")
-# print(f"\n📄 Retrieved Docs: {len(final_state['retrieved_docs'])}")
-# print(f"\n📄 Retrieved Docs: {(final_state['retrieved_docs'])}")
