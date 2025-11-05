@@ -1,0 +1,19 @@
+# LangChain and LangGraph
+langchain
+langchain-community
+langgraph
+langchain-groq
+
+# Vector Database
+chromadb
+
+# Embeddings
+sentence-transformers
+
+# LLM
+groq
+
+# Utilities
+python-dotenv
+numpy
+dotenv
