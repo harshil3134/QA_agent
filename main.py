@@ -9,7 +9,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader,DirectoryLoader
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from langgraph.graph import StateGraph, END
 
 
@@ -69,6 +69,10 @@ def initialize_vectorstore():
     return vectorstore
 
 vectorstore=initialize_vectorstore()
+
+# initializing llm 
+llm = ChatGroq(temperature=0,
+                 model="meta-llama/llama-4-maverick-17b-128e-instruct")
 
 #langgraph state
 class AgentState(TypedDict):
@@ -149,6 +153,115 @@ def retrieve_node(state:AgentState)->dict:
         "messages": [f"RETRIEVE: Found {len(retrieved_docs)} relevant documents"]
     }
 
+def answer_node(state: AgentState) -> AgentState:
+    """
+    Node 3: Answer - Generate answer using LLM and retrieved context
+    """
+    print("\n" + "="*60)
+    print("� ANSWER NODE - Generating response...")
+    print("="*60)
+    
+    question = state["question"]
+    retrieved_docs = state["retrieved_docs"]
+    prompt=""
+    if not state["need_retrival"]:
+        # Simple response for greetings
+        prompt_template = """You are a helpful, concise AI assistant. Answer the user's question using general knowledge. If you do not know the answer or the question requires external documents/citations, reply: \"I don't have enough information to answer that question.\" If the question is ambiguous, ask a brief clarifying question.
+        Question: {question}
+        Answer:"""
+                    
+        prompt = PromptTemplate(
+            template=prompt_template,
+            input_variables=["question"]
+        )
+      
+    else:
+            # Create context from retrieved documents
+        context = "\n\n".join(retrieved_docs)
+            
+            # Create prompt
+        prompt_template = """You are a helpful AI assistant. Answer the question based on the context provided below. 
+        If the answer cannot be found in the context, say "I don't have enough information to answer that question."
+
+        Context:
+        {context}
+
+        Question: {question}
+
+        Answer:"""
+    
+        prompt = PromptTemplate(
+            template=prompt_template,
+            input_variables=["context", "question"]
+        )
+    
+    # Generate answer
+    formatted_prompt = prompt.format(context=context, question=question)
+    response = llm.invoke(formatted_prompt)
+    answer = response.content
+    
+    print(f"Answer: {answer}")
+    
+    state["answer"] = answer
+    state["messages"].append("ANSWER: Generated using LLM and retrieved context")
+    
+    return state
+
+
+def reflect_node(state: AgentState) -> AgentState:
+    """
+     Reflect - Evaluate answer for relevance and completeness
+    """
+    print("\n" + "="*60)
+    print("➡️ REFLECT NODE - Evaluating answer quality...")
+    print("="*60)
+    
+    question = state["question"]
+    answer = state["answer"]
+    retrieved_docs = state["retrieved_docs"]
+    
+    # Use LLM to evaluate the answer
+    reflection_prompt = f"""Evaluate if the following answer is relevant and complete for the given question.
+
+Question: {question}
+
+Answer: {answer}
+
+Evaluation criteria:
+1. Is the answer relevant to the question?
+2. Is the answer complete and informative?
+3. Does the answer make sense?
+
+Respond with:
+- Relevance: relevant/not_relevant
+- Completeness: complete/incomplete/partial
+- Overall: good/needs_improvement
+
+Format: Relevance: X | Completeness: Y | Overall: Z"""
+    
+    reflection_response = llm.invoke(reflection_prompt)
+    reflection_text = reflection_response.content
+    
+    print(f"Reflection: {reflection_text}")
+    
+    # Parse reflection (simple parsing)
+    reflection = {
+        "evaluation": reflection_text,
+        "num_docs_used": len(retrieved_docs),
+        "answer_length": len(answer)
+    }
+    
+    # Determine if answer is acceptable
+    is_good = "good" in reflection_text.lower() and "relevant" in reflection_text.lower()
+    reflection["is_acceptable"] = is_good
+    
+    print(f"\n✅ Answer is {'acceptable' if is_good else 'needs improvement'}")
+    
+    state["reflection"] = reflection
+    state["messages"].append(f"REFLECT: Answer evaluated - {'Acceptable' if is_good else 'Needs improvement'}")
+    
+    return state
+
 def build_graph():
     """Build the LangGraph workflow"""
     print("\n🔧  Building LangGraph workflow...")
@@ -159,16 +272,15 @@ def build_graph():
     # Add nodes
     workflow.add_node("plan", plan_node)
     workflow.add_node("retrieve", retrieve_node)
-    # workflow.add_node("answer", answer_node)
-    # workflow.add_node("reflect", reflect_node)
+    workflow.add_node("answer", answer_node)
+    workflow.add_node("reflect", reflect_node)
     
     # Define edges (flow)
     workflow.set_entry_point("plan")
     workflow.add_edge("plan", "retrieve")
-    workflow.add_edge("retrieve",END)
-    # workflow.add_edge("retrieve", "answer")
-    # workflow.add_edge("answer", "reflect")
-    # workflow.add_edge("reflect", END)
+    workflow.add_edge("retrieve", "answer")
+    workflow.add_edge("answer", "reflect")
+    workflow.add_edge("reflect", END)
     
     # Compile graph
     app = workflow.compile()
@@ -189,11 +301,11 @@ initial_state = {
 app = build_graph()
 final_state = app.invoke(initial_state)
     
-    # Print summary
-print("\n" + "="*30)
-print("SUMMARY")
-print("="*30)
-print(f"\n❓ Question: {final_state['question']}")
-print(f"\n💡 Answer: {final_state['answer']}")
-print(f"\n📄 Retrieved Docs: {len(final_state['retrieved_docs'])}")
-print(f"\n📄 Retrieved Docs: {(final_state['retrieved_docs'])}")
+#     # Print summary
+# print("\n" + "="*30)
+# print("SUMMARY")
+# print("="*30)
+# print(f"\n❓ Question: {final_state['question']}")
+# print(f"\n💡 Answer: {final_state['answer']}")
+# print(f"\n📄 Retrieved Docs: {len(final_state['retrieved_docs'])}")
+# print(f"\n📄 Retrieved Docs: {(final_state['retrieved_docs'])}")
