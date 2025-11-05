@@ -2,13 +2,15 @@ import os
 from typing import List,TypedDict,Annotated
 from operator import add
 from dotenv import load_dotenv
+from pydantic import BaseModel,Field
 
 from langchain_community.vectorstores import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import TextLoader,DirectoryLoader
-from langchain_core.prompts import PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
+from langgraph.graph import StateGraph, END
 
 
 CHROMA_PERSIST_DIR='./chroma_db'
@@ -68,3 +70,130 @@ def initialize_vectorstore():
 
 vectorstore=initialize_vectorstore()
 
+#langgraph state
+class AgentState(TypedDict):
+    question:str
+    need_retrival:bool
+    retrieved_docs:List[str]
+    answer:str
+    reflection:dict
+    messages:Annotated[List[str],add]
+    
+class Plan(BaseModel):
+    """The plan for handling the user's question"""
+    decision: str=Field(description="One of 'retrieve' or 'answer_only'")
+    reasoning:str=Field(description="A brief explanation for the decision.")
+
+#langraph nodes
+
+def plan_node(state:AgentState)-> dict:
+    """Planning Node analyze the question and decide if retrieval is needed"""
+    print('💬 Plan node analyzing question')
+    question=state['question']
+    print(f"Question: {question}")
+
+    llm_gpt = ChatGroq(temperature=0, model="openai/gpt-oss-20b")
+
+    planner_prompt = ChatPromptTemplate([
+        ("system", 
+         "You are an expert router. Analyze the user's question and decide if it requires looking up external knowledge ('retrieve') "
+         "from the knowledge base or can be answered from general knowledge ('answer_only'). "
+         "If the question relates to climate change, renewable energy, sustainability, or sustainable tech, choose 'retrieve'. "
+         "You must respond with a JSON object that adheres to the provided schema."),
+        ("human", "{question}")
+    ])
+    structured_llm=planner_prompt | llm_gpt.with_structured_output(Plan)
+
+    try:
+        response=structured_llm.invoke({"question":question})
+        need_retrival = response.decision == 'retrieve'
+        print(f'➡️ Decision: {response}')
+        return {"need_retrival": need_retrival}
+    
+    except Exception as e:
+        print(f"Error in LLM plan:{e}")
+        return {"need_retrival": True}
+
+
+def retrieve_node(state:AgentState)->dict:
+    """Get relevant documents from vector store"""
+    print("➡️ Calling retirval node")
+
+    if not state["need_retrival"]:
+        print("⏭️  Skipping retrieval (not needed)")
+        return {
+            "retrieved_docs": [],
+            "messages": ["RETRIEVE: Skipped - No retrieval needed"]
+        }
+    
+    question = state["question"]
+    
+    # Retrieve relevant documents
+    retriever = vectorstore.as_retriever(
+        search_type="similarity",
+        search_kwargs={"k": 3}
+    )
+    
+    docs = retriever.invoke(question)
+    
+    # Extract content
+    retrieved_docs = [doc.page_content for doc in docs]
+
+    print(f" Retrieved {len(retrieved_docs)} relevant documents:")
+    for i, doc in enumerate(retrieved_docs, 1):
+        preview = doc[:150] + "..." if len(doc) > 150 else doc
+        print(f"\n  Doc {i}: {preview}")
+    
+    return {
+        "retrieved_docs": retrieved_docs,
+        "messages": [f"RETRIEVE: Found {len(retrieved_docs)} relevant documents"]
+    }
+
+def build_graph():
+    """Build the LangGraph workflow"""
+    print("\n🔧  Building LangGraph workflow...")
+    
+    # Create graph
+    workflow = StateGraph(AgentState)
+    
+    # Add nodes
+    workflow.add_node("plan", plan_node)
+    workflow.add_node("retrieve", retrieve_node)
+    # workflow.add_node("answer", answer_node)
+    # workflow.add_node("reflect", reflect_node)
+    
+    # Define edges (flow)
+    workflow.set_entry_point("plan")
+    workflow.add_edge("plan", "retrieve")
+    workflow.add_edge("retrieve",END)
+    # workflow.add_edge("retrieve", "answer")
+    # workflow.add_edge("answer", "reflect")
+    # workflow.add_edge("reflect", END)
+    
+    # Compile graph
+    app = workflow.compile()
+    
+    print("✅ LangGraph workflow built successfully")
+    return app
+
+
+
+initial_state = {
+        "question": "What are the benefits of renewable energy?",
+        "need_retrival": False,
+        "retrieved_docs": [],
+        "answer": "",
+        "reflection": {},
+        "messages": []
+}
+app = build_graph()
+final_state = app.invoke(initial_state)
+    
+    # Print summary
+print("\n" + "="*30)
+print("SUMMARY")
+print("="*30)
+print(f"\n❓ Question: {final_state['question']}")
+print(f"\n💡 Answer: {final_state['answer']}")
+print(f"\n📄 Retrieved Docs: {len(final_state['retrieved_docs'])}")
+print(f"\n📄 Retrieved Docs: {(final_state['retrieved_docs'])}")
