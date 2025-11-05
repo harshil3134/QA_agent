@@ -1,0 +1,7 @@
+Project Report — RAG Q&A Agent
+
+I built a simple RAG (retrieval-augmented generation) Q&A agent that follows a four-step flow: plan → retrieve → answer → reflect. The plan node asks a small router model whether the question needs document retrieval. If yes, the retrieve node queries a local Chroma vector store (created from the repo's text files using Hugging Face embeddings). The answer node then prompts a larger LLM with the retrieved context and generates the final response; the reflect node performs a lightweight relevance check. I included minimal logging so you can see the flow while running locally, and the app is wired to a Streamlit UI for interactive testing.
+
+Challenges I faced
+
+Building this LangGraph agent required navigating the rapidly modularizing LangChain ecosystem, which caused continuous dependency errors as core components were moved to new packages like langchain-core and langchain-text-splitters. This was complicated by persistent syntax errors—especially when implementing the LLM-powered router—due to mixing standard Python dictionary access with Pydantic object dot notation required for the agent's state management. Ultimately, deploying the application to a public platform like Streamlit failed. Due to lack of time i was unable to deploy it.
