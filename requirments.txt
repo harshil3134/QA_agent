@@ -16,5 +16,3 @@ groq
 # Utilities
 python-dotenv
 numpy
-dotenv
-python-dotenv
