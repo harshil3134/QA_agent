@@ -1,6 +1,7 @@
 # LangChain and LangGraph
 langchain
 langchain-community
+langchain_huggingface
 langgraph
 langchain-groq
 
