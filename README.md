@@ -3,6 +3,9 @@
 
 Minimal project demonstrating a Retrieval‑Augmented Generation (RAG) Q&A agent that uses local document embeddings (Chroma + HuggingFace embeddings) and a Groq LLM for planning/answering.
 
+check live demo: https://harshil3134-qa-agent-app-gvrksi.streamlit.app/
+(wait for it to boot up)
+
 Quick start
 -----------
 
